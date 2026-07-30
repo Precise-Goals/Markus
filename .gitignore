@@ -1,0 +1,14 @@
+# Logs and runtime caches
+*.log
+*.tmp
+*.cache
+/logs/
+/tmp/
+
+# OS / Editor files
+.DS_Store
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
