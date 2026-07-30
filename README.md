@@ -9,13 +9,13 @@
   ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝
 ```
 
-**Sleek · High-Performance · Universal Local LLM Manager & Chatbot TUI for Linux & macOS**  
+**Sleek · High-Performance · Universal Local LLM Manager & Chatbot TUI for Windows, Linux & macOS**  
 *Powered by `llama.cpp` · Zero Config · Full OpenAI API Server · Universal GGUF Scanner*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-red.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-[![Shell](https://img.shields.io/badge/Shell-Bash_v5+-cyan.svg?style=for-the-badge&logo=gnu-bash&logoColor=white)](https://www.gnu.org/software/bash/)
+[![Shell](https://img.shields.io/badge/Shell-Bash%20%7C%20PowerShell%20%7C%20CMD-cyan.svg?style=for-the-badge)](https://www.gnu.org/software/bash/)
 [![Backend: llama.cpp](https://img.shields.io/badge/Backend-llama.cpp-yellow.svg?style=for-the-badge)](https://github.com/ggerganov/llama.cpp)
-[![Platform: Linux | macOS](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-green.svg?style=for-the-badge&logo=linux&logoColor=white)]()
+[![Platform: Windows | Linux | macOS](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-green.svg?style=for-the-badge)]()
 
 </div>
 
@@ -23,14 +23,25 @@
 
 ## ⚡ One-Line Universal Installation
 
-Install or update **MARKUS** globally on any Linux or macOS system with a single command:
+Install or update **MARKUS** globally across Windows, Linux, and macOS with a single command:
 
+### 🪟 Windows (PowerShell, Windows Terminal, or CMD)
+Run this command in **Windows PowerShell** or **Windows Terminal**:
+```powershell
+irm https://raw.githubusercontent.com/Precise-Goals/Markus/main/install.ps1 | iex
+```
+> **What the Windows installer does:**
+> - Installs `markus`, `markus.ps1`, `markus.cmd`, and `markus.bat` into `%USERPROFILE%\.local\bin`.
+> - Automatically adds `%USERPROFILE%\.local\bin` to your **Windows User PATH** so you can type `markus` natively from anywhere in PowerShell, CMD, or Windows Terminal.
+> - Automatically detects your Git for Windows (Git Bash), MSYS2, Cygwin, or WSL environment and bridges commands transparently.
+> - Detects `llama.cpp`, Ollama, and LM Studio backends across Windows paths (`AppData\Local`, `Programs`, etc.).
+
+### 🐧 Linux & 🍏 macOS (Bash / Zsh / Git Bash / WSL)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Precise-Goals/Markus/main/install.sh | bash
 ```
-
-> **What the installer does:**
-> - Detects system permissions (installs to `/usr/local/bin/markus` with `sudo`, or `~/.local/bin/markus` without sudo).
+> **What the POSIX installer does:**
+> - Detects system permissions (installs to `/usr/local/bin` with `sudo`, or `~/.local/bin` without sudo).
 > - Initializes configuration directories (`~/.config/markus` and `~/.local/share/markus/models`).
 > - Verifies your `llama.cpp` backend installation and offers automated dependency hints.
 

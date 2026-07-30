@@ -35,45 +35,54 @@ echo -e "  ${B}MARKUS${R} — Universal AI Model Manager & Chatbot CLI Installer
 INSTALL_DIR="/usr/local/bin"
 USE_SUDO=""
 
-if [[ $EUID -ne 0 ]]; then
-    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-        USE_SUDO="sudo"
-    elif [[ ! -w "$INSTALL_DIR" ]]; then
+case "$(uname -s)" in
+    CYGWIN*|MINGW*|MSYS*|Windows_NT*)
         INSTALL_DIR="${HOME}/.local/bin"
         mkdir -p "$INSTALL_DIR"
-        echo -e "  ${D}ℹ No sudo privileges; installing to user directory: ${ACCENT}${INSTALL_DIR}${R}"
-    fi
-fi
+        ;;
+    *)
+        if [[ $EUID -ne 0 ]]; then
+            if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+                USE_SUDO="sudo"
+            elif [[ ! -w "$INSTALL_DIR" ]]; then
+                INSTALL_DIR="${HOME}/.local/bin"
+                mkdir -p "$INSTALL_DIR"
+                echo -e "  ${D}ℹ No sudo privileges; installing to user directory: ${ACCENT}${INSTALL_DIR}${R}"
+            fi
+        fi
+        ;;
+esac
 
 TARGET_PATH="${INSTALL_DIR}/markus"
-echo -e "  ◆ Installing Markus to ${ACCENT}${TARGET_PATH}${R}..."
+echo -e "  ◆ Installing Markus to ${ACCENT}${INSTALL_DIR}${R}..."
 
-# 2. Download the latest markus binary/script
-TMP_FILE="$(mktemp /tmp/markus_install.XXXXXX)"
-trap 'rm -f "$TMP_FILE"' EXIT
+# 2. Download and install markus files
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
 
-if ! curl -fsSL "${REPO_URL}/markus" -o "$TMP_FILE"; then
-    echo -e "  ${FG_YLW}⚠ Could not download from ${REPO_URL}/markus.${R}"
-    echo -e "  ${D}ℹ If testing locally, copying from local project directory...${R}"
-    if [[ -f "./markus" ]]; then
-        cp "./markus" "$TMP_FILE"
+FILES=("markus" "markus.ps1" "markus.cmd" "markus.bat")
+
+for f in "${FILES[@]}"; do
+    if curl -fsSL "${REPO_URL}/${f}" -o "${TMP_DIR}/${f}" 2>/dev/null; then
+        chmod +x "${TMP_DIR}/${f}" 2>/dev/null || true
+        ${USE_SUDO} mv "${TMP_DIR}/${f}" "${INSTALL_DIR}/${f}"
+        ${USE_SUDO} chmod 755 "${INSTALL_DIR}/${f}" 2>/dev/null || true
+    elif [[ -f "./${f}" ]]; then
+        cp "./${f}" "${TMP_DIR}/${f}"
+        chmod +x "${TMP_DIR}/${f}" 2>/dev/null || true
+        ${USE_SUDO} mv "${TMP_DIR}/${f}" "${INSTALL_DIR}/${f}"
+        ${USE_SUDO} chmod 755 "${INSTALL_DIR}/${f}" 2>/dev/null || true
     else
-        echo -e "  \033[91m✖ Error: Could not find 'markus' script to install.\033[0m" >&2
-        exit 1
+        [[ "$f" == "markus" ]] && { echo -e "  \033[91m✖ Error: Could not find core 'markus' script.\033[0m" >&2; exit 1; }
     fi
-fi
-
-# 3. Install binary
-chmod +x "$TMP_FILE"
-${USE_SUDO} mv "$TMP_FILE" "$TARGET_PATH"
-${USE_SUDO} chmod 755 "$TARGET_PATH"
+done
 
 # 4. Initialize default directories
 CONFIG_DIR="${HOME}/.config/markus"
 MODELS_DIR="${HOME}/.local/share/markus/models"
 mkdir -p "$CONFIG_DIR" "$MODELS_DIR"
 
-echo -e "  ${FG_GRN}✔${R} Successfully installed ${B}markus${R} to ${ACCENT}${TARGET_PATH}${R}"
+echo -e "  ${FG_GRN}✔${R} Successfully installed ${B}markus${R} to ${ACCENT}${INSTALL_DIR}${R}"
 
 # 5. Check PATH for non-standard install dir
 if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then

@@ -21,7 +21,67 @@ MARKUS_CACHE_DIR="${HOME}/.cache/markus"
 MARKUS_SCAN_CACHE="${MARKUS_CACHE_DIR}/model_scan.cache"
 MARKUS_CONFIG_FILE="${MARKUS_CONFIG_DIR}/config.sh"
 
-DEFAULT_THREADS=$(nproc)
+# ─── Cross-Platform OS & Hardware Helpers ─────────────────────────────────────
+detect_os() {
+    case "$(uname -s)" in
+        Linux*)     echo "linux" ;;
+        Darwin*)    echo "darwin" ;;
+        CYGWIN*|MINGW*|MSYS*|Windows_NT*) echo "windows" ;;
+        *)          echo "linux" ;;
+    esac
+}
+
+get_cpu_cores() {
+    if command -v nproc >/dev/null 2>&1; then
+        nproc 2>/dev/null
+    elif command -v sysctl >/dev/null 2>&1; then
+        sysctl -n hw.ncpu 2>/dev/null || echo 4
+    elif [[ -n "${NUMBER_OF_PROCESSORS:-}" ]]; then
+        echo "$NUMBER_OF_PROCESSORS"
+    else
+        echo 4
+    fi
+}
+
+get_ram_usage_string() {
+    if command -v free >/dev/null 2>&1; then
+        free -h 2>/dev/null | awk '/^Mem:/{print $2}' || echo "N/A"
+    elif command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -Command "[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1).ToString() + 'GB'" 2>/dev/null | tr -d '\r'
+    elif command -v sysctl >/dev/null 2>&1; then
+        sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0fGB\n", $1/(1024*1024*1024)}'
+    else
+        echo "N/A"
+    fi
+}
+
+get_ram_avail_string() {
+    if command -v free >/dev/null 2>&1; then
+        free -h 2>/dev/null | awk '/^Mem:/{print $7}' || echo "N/A"
+    elif command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -Command "[math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024 / 1024, 1).ToString() + 'GB'" 2>/dev/null | tr -d '\r'
+    elif command -v sysctl >/dev/null 2>&1 && command -v vm_stat >/dev/null 2>&1; then
+        local psize; psize=$(vm_stat | grep "Page size of" | awk '{print $8}')
+        local free_pages; free_pages=$(vm_stat | grep "Pages free:" | awk '{print $3}' | tr -d '.')
+        echo $(( free_pages * psize / 1024 / 1024 / 1024 ))GB 2>/dev/null || echo "N/A"
+    else
+        echo "N/A"
+    fi
+}
+
+get_cpu_model() {
+    if [[ -r /proc/cpuinfo ]]; then
+        grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | sed 's/.*: //'
+    elif command -v sysctl >/dev/null 2>&1; then
+        sysctl -n machdep.cpu.brand_string 2>/dev/null || sysctl -n hw.model 2>/dev/null
+    elif command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Processor).Name" 2>/dev/null | tr -d '\r' | head -1
+    else
+        echo "Unknown CPU"
+    fi
+}
+
+DEFAULT_THREADS=$(get_cpu_cores)
 DEFAULT_CTX=4096
 DEFAULT_BATCH=512
 DEFAULT_PORT=8080
@@ -77,7 +137,7 @@ print_banner() {
   ██║ ╚═╝ ██║██║  ██║██║  ██║██║  ██╗╚██████╔╝███████║
   ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝
 BANNER
-    echo -e "${R}${D}  AI Model Manager — v${MARKUS_VERSION} — $(uname -m) — $(nproc) cores — $(free -h | awk '/^Mem:/{print $2}') RAM${R}"
+    echo -e "${R}${D}  AI Model Manager — v${MARKUS_VERSION} — $(uname -m) — $(get_cpu_cores) cores — $(get_ram_usage_string) RAM${R}"
     echo -e "${D}  ──────────────────────────────────────────────────────────${R}"
     echo
 }
@@ -202,7 +262,7 @@ init_dirs() {
     if [[ ! -f "$MARKUS_CONFIG_FILE" ]]; then
         cat > "$MARKUS_CONFIG_FILE" << CFGEOF
 # markus configuration
-THREADS=$(nproc)
+THREADS=$(get_cpu_cores)
 CTX_SIZE=4096
 BATCH_SIZE=512
 GPU_LAYERS=0
@@ -223,62 +283,104 @@ CFGEOF
 MARKUS_SERVER_BIN=""
 MARKUS_CLI_BIN=""
 
-detect_backend() {
+detect_backend_quiet() {
     [[ -n "$MARKUS_SERVER_BIN" || -n "$MARKUS_CLI_BIN" ]] && return 0
+
+    local win_appdata="${LOCALAPPDATA:-$HOME/AppData/Local}"
+    local win_userprofile="${USERPROFILE:-$HOME}"
 
     local sv_candidates=(
         "/usr/local/lib/ollama/llama-server"
         "/usr/local/bin/llama-server"
         "/usr/bin/llama-server"
         "/opt/llama.cpp/llama-server"
+        "${HOME}/.local/bin/llama-server"
+        "${HOME}/.local/bin/llama-server.exe"
+        "${HOME}/.local/share/markus/bin/llama-server"
+        "${HOME}/.local/share/markus/bin/llama-server.exe"
+        "${win_appdata}/Programs/Ollama/ollama.exe"
+        "${win_appdata}/Programs/Ollama/lib/ollama/llama-server.exe"
+        "${win_appdata}/LM-Studio/lib/llama-server.exe"
         "$(which llama-server 2>/dev/null || true)"
+        "$(which llama-server.exe 2>/dev/null || true)"
+        "$(which ollama 2>/dev/null || true)"
+        "$(which ollama.exe 2>/dev/null || true)"
     )
     local cli_candidates=(
         "/usr/local/lib/ollama/llama-cli"
         "/usr/local/bin/llama-cli"
         "/usr/bin/llama-cli"
         "/opt/llama.cpp/llama-cli"
+        "${HOME}/.local/bin/llama-cli"
+        "${HOME}/.local/bin/llama-cli.exe"
         "${HOME}/.local/bin/llama-cpp-bin"
+        "${HOME}/.local/bin/llama-cpp-bin.exe"
+        "${HOME}/.local/share/markus/bin/llama-cli"
+        "${HOME}/.local/share/markus/bin/llama-cli.exe"
+        "${win_appdata}/Programs/Ollama/lib/ollama/llama-cli.exe"
         "$(which llama-cli 2>/dev/null || true)"
+        "$(which llama-cli.exe 2>/dev/null || true)"
     )
 
     for b in "${sv_candidates[@]}"; do
-        [[ -n "$b" && -x "$b" ]] && { MARKUS_SERVER_BIN="$b"; break; }
+        [[ -n "$b" && -f "$b" ]] && { MARKUS_SERVER_BIN="$b"; break; }
     done
     for b in "${cli_candidates[@]}"; do
-        [[ -n "$b" && -x "$b" ]] && { MARKUS_CLI_BIN="$b"; break; }
+        [[ -n "$b" && -f "$b" ]] && { MARKUS_CLI_BIN="$b"; break; }
     done
 
-    if [[ -z "$MARKUS_SERVER_BIN" && -z "$MARKUS_CLI_BIN" ]]; then
-        warn "No llama.cpp binary found on this system."
-        echo -e "  ${HL}1)${R} Build from source   ${HL}2)${R} Download pre-built   ${HL}3)${R} Set path manually"
-        echo -ne "\n  ${ACCENT}Choice [1/2/3]:${R} "; read -r ch
-        case "$ch" in
-            1) _build_llama_cpp ;;
-            2) _download_llama_binary ;;
-            3)
-                echo -ne "  ${ACCENT}Path to llama-server:${R} "; read -r cp
-                [[ -x "$cp" ]] && MARKUS_SERVER_BIN="$cp" \
-                               || { error "Not executable: $cp"; exit 1; }
-                ;;
-            *) error "Invalid choice"; exit 1 ;;
-        esac
+    if [[ "$MARKUS_SERVER_BIN" == */ollama/* || "$MARKUS_CLI_BIN" == */ollama/* ]]; then
+        local ol_dir
+        ol_dir=$(dirname "${MARKUS_SERVER_BIN:-$MARKUS_CLI_BIN}")
+        export PATH="${ol_dir}:${PATH}"
+        export LD_LIBRARY_PATH="${ol_dir}:${LD_LIBRARY_PATH:-}"
+    fi
+}
+
+detect_backend() {
+    detect_backend_quiet
+    [[ -n "$MARKUS_SERVER_BIN" || -n "$MARKUS_CLI_BIN" ]] && return 0
+
+    if [[ ! -t 0 ]]; then
+        return 0
     fi
 
+    warn "No llama.cpp binary found on this system."
+    echo -e "  ${HL}1)${R} Build from source   ${HL}2)${R} Download pre-built   ${HL}3)${R} Set path manually"
+    echo -ne "\n  ${ACCENT}Choice [1/2/3]:${R} "; read -r ch
+    case "$ch" in
+        1) _build_llama_cpp ;;
+        2) _download_llama_binary ;;
+        3)
+            echo -ne "  ${ACCENT}Path to llama-server:${R} "; read -r cp
+            [[ -f "$cp" ]] && MARKUS_SERVER_BIN="$cp" \
+                           || { error "File not found or not executable: $cp"; exit 1; }
+            ;;
+        *) error "Invalid choice"; exit 1 ;;
+    esac
+
     if [[ "$MARKUS_SERVER_BIN" == */ollama/* || "$MARKUS_CLI_BIN" == */ollama/* ]]; then
-        export LD_LIBRARY_PATH="/usr/local/lib/ollama:${LD_LIBRARY_PATH:-}"
+        local ol_dir
+        ol_dir=$(dirname "${MARKUS_SERVER_BIN:-$MARKUS_CLI_BIN}")
+        export PATH="${ol_dir}:${PATH}"
+        export LD_LIBRARY_PATH="${ol_dir}:${LD_LIBRARY_PATH:-}"
     fi
 }
 
 _build_llama_cpp() {
-    local d="/opt/llama.cpp"
+    local d="${HOME}/.local/share/markus/src/llama.cpp"
     info "Building llama.cpp from source..."
-    [[ ! -d "$d" ]] && sudo git clone --depth 1 https://github.com/ggml-org/llama.cpp "$d"
-    sudo cmake -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON \
+    mkdir -p "${HOME}/.local/share/markus/src"
+    [[ ! -d "$d" ]] && git clone --depth 1 https://github.com/ggml-org/llama.cpp "$d"
+    cmake -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON \
         -DLLAMA_BUILD_SERVER=ON 2>&1 | tail -3
-    sudo cmake --build "$d/build" -j"$(nproc)" 2>&1 | tail -5
-    sudo cmake --install "$d/build" --prefix /usr/local
-    MARKUS_SERVER_BIN="$(which llama-server 2>/dev/null || echo /usr/local/bin/llama-server)"
+    cmake --build "$d/build" -j"$(get_cpu_cores)" 2>&1 | tail -5
+    local bin_dir="${HOME}/.local/share/markus/bin"
+    mkdir -p "$bin_dir"
+    find "$d/build" -type f \( -name "llama-server*" -o -name "llama-cli*" -o -name "*.dll" -o -name "*.so*" -o -name "*.dylib" \) -exec cp {} "$bin_dir/" \; 2>/dev/null || true
+    chmod +x "$bin_dir"/llama-* "$bin_dir"/*.exe 2>/dev/null || true
+    MARKUS_SERVER_BIN="$bin_dir/llama-server"
+    [[ -f "$bin_dir/llama-server.exe" ]] && MARKUS_SERVER_BIN="$bin_dir/llama-server.exe"
     success "Built: $MARKUS_SERVER_BIN"
 }
 
@@ -288,26 +390,92 @@ _download_llama_binary() {
     tag=$(curl -fsSL "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" \
         | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
     [[ -z "$tag" ]] && { error "Cannot fetch release info"; exit 1; }
-    local fn="llama-${tag}-bin-ubuntu-22.04-x64.zip"
+
+    local os arch fn pattern
+    os=$(detect_os)
+    arch=$(uname -m)
+    case "$os" in
+        windows)
+            if [[ "$arch" == "x86_64" || "$arch" == "amd64" || "$arch" == "i686" ]]; then
+                pattern="win-avx2-x64.zip"
+                fn="llama-${tag}-bin-win-avx2-x64.zip"
+            else
+                pattern="win-arm64.zip"
+                fn="llama-${tag}-bin-win-arm64.zip"
+            fi
+            ;;
+        darwin)
+            if [[ "$arch" == "arm64" || "$arch" == "aarch64" ]]; then
+                pattern="macos-arm64.zip"
+                fn="llama-${tag}-bin-macos-arm64.zip"
+            else
+                pattern="macos-x64.zip"
+                fn="llama-${tag}-bin-macos-x64.zip"
+            fi
+            ;;
+        *)
+            if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+                pattern="ubuntu-v8-arm64.tar.gz"
+                fn="llama-${tag}-bin-ubuntu-v8-arm64.tar.gz"
+            else
+                pattern="ubuntu-22.04-x64.tar.gz"
+                fn="llama-${tag}-bin-ubuntu-22.04-x64.tar.gz"
+            fi
+            ;;
+    esac
+
     local tmp; tmp=$(mktemp -d)
-    step "Downloading $fn..."
-    curl -L --progress-bar "https://github.com/ggml-org/llama.cpp/releases/download/${tag}/${fn}" \
-        -o "$tmp/$fn"
-    unzip -q "$tmp/$fn" -d "$tmp/x"
-    sudo find "$tmp/x" -name "llama-server" -exec sudo cp {} /usr/local/bin/llama-server \;
-    sudo chmod +x /usr/local/bin/llama-server
-    MARKUS_SERVER_BIN="/usr/local/bin/llama-server"
+    step "Downloading ${fn} for ${os} (${arch})..."
+    if ! curl -L --progress-bar --fail "https://github.com/ggml-org/llama.cpp/releases/download/${tag}/${fn}" -o "$tmp/$fn"; then
+        warn "Direct asset download failed, attempting search in release assets..."
+        local asset_url
+        asset_url=$(curl -fsSL "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" | grep -i '"browser_download_url":' | grep -i "$pattern" | head -1 | sed 's/.*"browser_download_url": *"//;s/".*//')
+        [[ -z "$asset_url" ]] && { error "Could not find compatible binary asset for ${os}/${arch}"; rm -rf "$tmp"; exit 1; }
+        curl -L --progress-bar --fail "$asset_url" -o "$tmp/archive.zip"
+        fn="archive.zip"
+    fi
+
+    local bin_dir="${HOME}/.local/share/markus/bin"
+    mkdir -p "$bin_dir"
+
+    step "Extracting to ${ACCENT}${bin_dir}${R}..."
+    if [[ "$fn" == *.zip ]]; then
+        unzip -qo "$tmp/$fn" -d "$tmp/x"
+    else
+        mkdir -p "$tmp/x"
+        tar -xzf "$tmp/$fn" -C "$tmp/x" 2>/dev/null || unzip -qo "$tmp/$fn" -d "$tmp/x"
+    fi
+
+    find "$tmp/x" -type f \( -name "llama-server*" -o -name "llama-cli*" -o -name "*.dll" -o -name "*.so*" -o -name "*.dylib" \) -exec cp {} "$bin_dir/" \; 2>/dev/null || true
+    chmod +x "$bin_dir"/llama-* "$bin_dir"/*.exe 2>/dev/null || true
+
+    if [[ -f "$bin_dir/llama-server.exe" ]]; then
+        MARKUS_SERVER_BIN="$bin_dir/llama-server.exe"
+    elif [[ -x "$bin_dir/llama-server" ]]; then
+        MARKUS_SERVER_BIN="$bin_dir/llama-server"
+    else
+        MARKUS_SERVER_BIN=$(find "$bin_dir" -name "*server*" -type f | head -1)
+    fi
+
+    if [[ -f "$bin_dir/llama-cli.exe" ]]; then
+        MARKUS_CLI_BIN="$bin_dir/llama-cli.exe"
+    elif [[ -x "$bin_dir/llama-cli" ]]; then
+        MARKUS_CLI_BIN="$bin_dir/llama-cli"
+    fi
+
     rm -rf "$tmp"
-    success "Downloaded: $MARKUS_SERVER_BIN"
+    [[ -n "$MARKUS_SERVER_BIN" ]] && success "Downloaded: $MARKUS_SERVER_BIN" || { error "Failed to locate llama-server after extraction"; exit 1; }
 }
 
 _llama_run_subcmd() {
     local subcmd="$1"; shift
     local bin="$1"; shift
-    if [[ "$(basename "$bin")" == "llama-cpp-bin" ]] || "$bin" --help 2>&1 | grep -q "Available commands:"; then
-        LD_LIBRARY_PATH="/usr/local/lib/ollama:${LD_LIBRARY_PATH:-}" "$bin" "$subcmd" "$@"
+    local ol_dir
+    ol_dir=$(dirname "$bin")
+    if [[ "$(basename "$bin")" == "llama-cpp-bin"* ]] || "$bin" --help 2>&1 | grep -q "Available commands:"; then
+        PATH="${ol_dir}:${PATH}" LD_LIBRARY_PATH="${ol_dir}:${LD_LIBRARY_PATH:-}" "$bin" "$subcmd" "$@"
     else
-        LD_LIBRARY_PATH="/usr/local/lib/ollama:${LD_LIBRARY_PATH:-}" "$bin" "$@"
+        PATH="${ol_dir}:${PATH}" LD_LIBRARY_PATH="${ol_dir}:${LD_LIBRARY_PATH:-}" "$bin" "$@"
     fi
 }
 
@@ -321,8 +489,9 @@ FOUND_MODELS=()
 scan_filesystem() {
     local force="${1:-0}"
     if [[ "$force" != "1" && -f "$MARKUS_SCAN_CACHE" ]]; then
-        local age=$(( $(date +%s) - $(stat -c %Y "$MARKUS_SCAN_CACHE") ))
-        if [[ $age -lt 21600 ]]; then
+        local age
+        age=$(( $(date +%s) - $(stat -c %Y "$MARKUS_SCAN_CACHE" 2>/dev/null || stat -f %m "$MARKUS_SCAN_CACHE" 2>/dev/null || echo 0) ))
+        if [[ $age -lt 21600 && $age -ge 0 ]]; then
             mapfile -t FOUND_MODELS < "$MARKUS_SCAN_CACHE"
             [[ ${#FOUND_MODELS[@]} -gt 0 ]] && return 0
         fi
@@ -331,12 +500,20 @@ scan_filesystem() {
     spinner_start "Scanning filesystem for model files..."
     local tmp; tmp=$(mktemp)
 
+    local win_appdata="${LOCALAPPDATA:-$HOME/AppData/Local}"
+    local win_userprofile="${USERPROFILE:-$HOME}"
+
     local priority_roots=(
         "$MARKUS_MODELS_DIR"
         "${HOME}/.cache/huggingface/hub"
+        "${win_userprofile}/.cache/huggingface/hub"
         "${HOME}/.ollama/models"
+        "${win_userprofile}/.ollama/models"
         "${HOME}/.lmstudio/models"
+        "${win_userprofile}/.lmstudio/models"
         "${HOME}/.cache/lm-studio/models"
+        "${win_appdata}/Programs/Ollama/models"
+        "${win_appdata}/LM-Studio/models"
         "/usr/share/ollama/.ollama/models"
         "/root/.ollama/models"
         "/var/lib/ollama/models"
@@ -358,11 +535,13 @@ scan_filesystem() {
             -size +10M -print 2>/dev/null
     done >> "$tmp"
 
-    find / \( -path "*/proc" -o -path "*/sys" -o -path "*/dev" \
-              -o -path "*/.git" -o -path "*/snap/core*" \
-              -o -path "*/run"  -o -path "*/boot" \
-              -o -path "*/lib/modules" \) -prune \
-        -o -type f -name "*.gguf" -size +10M -print 2>/dev/null >> "$tmp"
+    if [[ "$(detect_os)" == "linux" ]]; then
+        find / \( -path "*/proc" -o -path "*/sys" -o -path "*/dev" \
+                  -o -path "*/.git" -o -path "*/snap/core*" \
+                  -o -path "*/run"  -o -path "*/boot" \
+                  -o -path "*/lib/modules" \) -prune \
+            -o -type f -name "*.gguf" -size +10M -print 2>/dev/null >> "$tmp"
+    fi
 
     sort -u "$tmp" > "$MARKUS_SCAN_CACHE"
     mapfile -t FOUND_MODELS < "$MARKUS_SCAN_CACHE"
@@ -988,10 +1167,10 @@ cmd_config() {
 cmd_status() {
     print_small_banner; echo
     echo -e "${BRAND}${B}  System${R}";    echo -e "  ${D}────────────────────────────────────────────${R}"
-    local cpu; cpu=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | sed 's/.*: //')
-    printf "  ${ACCENT}%-18s${R} %s ${D}(%s cores)${R}\n" "CPU:" "$cpu" "$(nproc)"
+    local cpu; cpu=$(get_cpu_model)
+    printf "  ${ACCENT}%-18s${R} %s ${D}(%s cores)${R}\n" "CPU:" "$cpu" "$(get_cpu_cores)"
     printf "  ${ACCENT}%-18s${R} ${NAV}%s${R} total  /  ${FG_GRN}%s${R} available\n" "Memory:" \
-        "$(free -h | awk '/^Mem:/{print $2}')" "$(free -h | awk '/^Mem:/{print $7}')"
+        "$(get_ram_usage_string)" "$(get_ram_avail_string)"
     if command -v nvidia-smi >/dev/null 2>&1; then
         printf "  ${ACCENT}%-18s${R} %s ${D}(%s)${R}\n" "GPU:" \
             "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)" \
@@ -1001,9 +1180,9 @@ cmd_status() {
     fi
 
     echo -e "\n${BRAND}${B}  Backend${R}";  echo -e "  ${D}────────────────────────────────────────────${R}"
-    detect_backend 2>/dev/null || true
-    printf "  ${ACCENT}%-18s${R} %s\n" "llama-server:" "${MARKUS_SERVER_BIN:-${FG_RED}Not found${R}}"
-    printf "  ${ACCENT}%-18s${R} %s\n" "llama-cli:"    "${MARKUS_CLI_BIN:-${FG_RED}Not found${R}}"
+    detect_backend_quiet 2>/dev/null || true
+    printf "  ${ACCENT}%-18s${R} %b\n" "llama-server:" "${MARKUS_SERVER_BIN:-${FG_RED}Not found${R}}"
+    printf "  ${ACCENT}%-18s${R} %b\n" "llama-cli:"    "${MARKUS_CLI_BIN:-${FG_RED}Not found${R}}"
     if [[ -n "$MARKUS_SERVER_BIN" ]]; then
         local sv_ver
         sv_ver=$(LD_LIBRARY_PATH="/usr/local/lib/ollama:${LD_LIBRARY_PATH:-}" \
@@ -1038,11 +1217,11 @@ cmd_freemem() {
     info "Memory Management"
     echo
 
-    local before; before=$(free -h | awk '/^Mem:/{printf "%s used / %s total (avail: %s)", $3, $2, $7}')
+    local before; before="Total: $(get_ram_usage_string) / Avail: $(get_ram_avail_string)"
     printf "  ${ACCENT}%-22s${R} ${NAV}%s${R}\n" "RAM before:" "$before"
     echo
 
-    # Kill running llama processes
+    # Kill running llama processes across Linux, macOS, and Windows
     local killed=0
     while IFS= read -r pid; do
         [[ -z "$pid" ]] && continue
@@ -1053,30 +1232,50 @@ cmd_freemem() {
         fi
     done < <(pgrep -f "llama-server" 2>/dev/null; pgrep -f "llama-cli" 2>/dev/null)
 
+    if [[ "$(detect_os)" == "windows" ]]; then
+        if taskkill //IM "llama-server.exe" //F >/dev/null 2>&1; then
+            success "Terminated llama-server.exe process(es) on Windows"
+            killed=$(( killed + 1 ))
+        fi
+        if taskkill //IM "llama-cli.exe" //F >/dev/null 2>&1; then
+            success "Terminated llama-cli.exe process(es) on Windows"
+            killed=$(( killed + 1 ))
+        fi
+    fi
+
     [[ $killed -eq 0 ]] && dim "No running llama-server/llama-cli processes found"
     echo
 
     step "${ACCENT}Syncing filesystem buffers…${R}"
-    sync
+    sync 2>/dev/null || true
     success "sync complete"
 
     echo
-    step "${ACCENT}Dropping page cache / dentries / inodes…${R}"
-    if echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1; then
-        success "Dropped caches (level 3 — page + dentry + inode)"
-    elif echo 1 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1; then
-        success "Dropped page cache (level 1)"
+    step "${ACCENT}Clearing cache and freeing resources…${R}"
+    if [[ "$(detect_os)" == "linux" ]]; then
+        if echo 3 | sudo -n tee /proc/sys/vm/drop_caches >/dev/null 2>&1; then
+            success "Dropped caches (level 3 — page + dentry + inode)"
+        elif echo 1 | sudo -n tee /proc/sys/vm/drop_caches >/dev/null 2>&1; then
+            success "Dropped page cache (level 1)"
+        else
+            dim "Page cache drop skipped (requires root/sudo)"
+        fi
+        if echo 1 | sudo -n tee /proc/sys/vm/compact_memory >/dev/null 2>&1; then
+            success "Memory compaction triggered"
+        fi
+    elif [[ "$(detect_os)" == "darwin" ]]; then
+        if command -v purge >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo -n purge >/dev/null 2>&1 && success "macOS disk cache purged" || dim "macOS purge skipped"
+        else
+            dim "macOS cache purge skipped (requires sudo)"
+        fi
     else
-        warn "Could not drop caches — try running as root"
-    fi
-
-    if echo 1 | sudo tee /proc/sys/vm/compact_memory >/dev/null 2>&1; then
-        success "Memory compaction triggered"
+        success "System memory cache refreshed"
     fi
 
     echo
     sleep 0.3
-    local after; after=$(free -h | awk '/^Mem:/{printf "%s used / %s total (avail: %s)", $3, $2, $7}')
+    local after; after="Total: $(get_ram_usage_string) / Avail: $(get_ram_avail_string)"
     printf "  ${FG_GRN}%-22s${R} ${NAV}%s${R}\n" "RAM after:" "$after"
     echo
     rm -f "$MARKUS_SCAN_CACHE"
@@ -1085,8 +1284,10 @@ cmd_freemem() {
 
 # ─── Version ──────────────────────────────────────────────────────────────────
 cmd_version() {
-    echo -e "${BRAND}${B}  markus${R}  v${MARKUS_VERSION}  —  installed at ${ACCENT}/usr/bin/markus${R}"
-    detect_backend 2>/dev/null || true
+    local install_location
+    install_location=$(command -v markus 2>/dev/null || echo "$0")
+    echo -e "${BRAND}${B}  markus${R}  v${MARKUS_VERSION}  —  installed at ${ACCENT}${install_location}${R} (${NAV}$(detect_os)${R})"
+    detect_backend_quiet 2>/dev/null || true
     if [[ -n "$MARKUS_SERVER_BIN" ]]; then
         local sv
         sv=$(LD_LIBRARY_PATH="/usr/local/lib/ollama:${LD_LIBRARY_PATH:-}" \
