@@ -17,10 +17,12 @@ $SuccessColor = "Green"
 $WarningColor = "Yellow"
 
 Write-Host ""
-Write-Host "   __  __   _   ___  _  _ _   _ ___ " -ForegroundColor $BrandColor
-Write-Host "  |  \/  | /_\ | _ \| |/ / | | / __|" -ForegroundColor $BrandColor
-Write-Host "  | |\/| |/ _ \|   /| ' <| |_| \__ \" -ForegroundColor $BrandColor
-Write-Host "  |_|  |_/_/ \_\_|_\|_|\_\\___/|___/" -ForegroundColor $BrandColor
+Write-Host "  ███╗   ███╗ █████╗ ██████╗ ██╗  ██╗██╗   ██╗███████╗" -ForegroundColor $BrandColor
+Write-Host "  ████╗ ████║██╔══██╗██╔══██╗██║ ██╔╝██║   ██║██╔════╝" -ForegroundColor $BrandColor
+Write-Host "  ██╔████╔██║███████║██████╔╝█████╔╝ ██║   ██║███████╗" -ForegroundColor $BrandColor
+Write-Host "  ██║╚██╔╝██║██╔══██║██╔══██╗██╔═██╗ ██║   ██║╚════██║" -ForegroundColor $BrandColor
+Write-Host "  ██║ ╚═╝ ██║██║  ██║██║  ██║██║  ██╗╚██████╔╝███████║" -ForegroundColor $BrandColor
+Write-Host "  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝" -ForegroundColor $BrandColor
 Write-Host "  MARKUS - Universal AI Model Manager and Chatbot CLI Installer (Windows)`n" -ForegroundColor White
 
 # 1. Determine installation directory
