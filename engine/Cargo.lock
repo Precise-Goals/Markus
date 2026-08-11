@@ -1651,6 +1651,7 @@ dependencies = [
  "indicatif",
  "memmap2",
  "num_cpus",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",
