@@ -1,0 +1,2 @@
+createSrcSidebar('[["bitflags",["",[],["external.rs","internal.rs","iter.rs","lib.rs","parser.rs","public.rs","traits.rs"]]],["cfg_if",["",[],["lib.rs"]]],["once_cell",["",[],["imp_std.rs","lib.rs","race.rs"]]],["unicode_ident",["",[],["lib.rs","tables.rs"]]]]');
+//{"start":19,"fragment_lengths":[105,30,56,49]}

@@ -1,0 +1,18 @@
+[package]
+name = "markus-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Terminal UI for Markus — replaces the Bash TUI entirely"
+
+[dependencies]
+markus-core = { path = "../markus-core" }
+ratatui.workspace = true
+crossterm.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
