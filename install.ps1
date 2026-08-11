@@ -35,6 +35,7 @@ Write-Host "  ✔  Rust $RustVer ready" -ForegroundColor Green
 Write-Host "  ◆  Building markus (release)... this may take a few minutes." -ForegroundColor Cyan
 Push-Location $EngineDir
 try {
+    $env:RUSTFLAGS="-C target-cpu=native"
     cargo build --release
 } finally {
     Pop-Location
@@ -53,6 +54,7 @@ if (!(Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 }
 $DestPath = Join-Path $InstallDir $BinaryName
+if (Test-Path $DestPath) { Remove-Item -Force $DestPath }
 Copy-Item -Path $BuildPath -Destination $DestPath -Force
 Write-Host "  ✔  Installed to $DestPath" -ForegroundColor Green
 

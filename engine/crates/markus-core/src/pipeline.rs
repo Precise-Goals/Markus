@@ -80,6 +80,7 @@ pub struct GenerationPipeline {
     tokenizer: MarkusTokenizer,
     device: Device,
     config: MarkusConfig,
+    arch: String,
 }
 
 impl GenerationPipeline {
@@ -111,11 +112,20 @@ impl GenerationPipeline {
 
         info!("Model loaded successfully on {:?}", device);
 
+        // Configure rayon thread pool if not already set
+        let threads = markus_config.threads as usize;
+        if threads > 0 {
+            let _ = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build_global();
+        }
+
         Ok(Self {
             runner,
             tokenizer,
             device,
             config: markus_config.clone(),
+            arch: arch.clone(),
         })
     }
 
@@ -140,13 +150,27 @@ impl GenerationPipeline {
         let start = std::time::Instant::now();
 
         // Tokenize
-        let tokens = match self.tokenizer.encode(prompt) {
+        let mut tokens = match self.tokenizer.encode(prompt) {
             Ok(t) => t,
             Err(e) => {
                 let _ = tx.send(TokenEvent::Error(e.to_string())).await;
                 return;
             }
         };
+
+        // Enforce context limit (leave room for max_tokens)
+        let max_gen = if gen_config.max_tokens < 0 { 512 } else { gen_config.max_tokens as usize };
+        let ctx_limit = self.config.ctx_size as usize;
+        
+        if tokens.len() + max_gen > ctx_limit {
+            let keep = ctx_limit.saturating_sub(max_gen).saturating_sub(1);
+            if keep > 0 {
+                tokens = tokens[tokens.len() - keep..].to_vec();
+            } else {
+                let _ = tx.send(TokenEvent::Error("Prompt exceeds context window".into())).await;
+                return;
+            }
+        }
 
         debug!("Prompt tokens: {}", tokens.len());
 
@@ -243,8 +267,37 @@ impl GenerationPipeline {
 
     /// Format a chat history into a model-appropriate prompt string
     fn format_chat_prompt(&self, messages: &[ChatMessage]) -> String {
-        // ChatML format (works for most modern models)
         let mut out = String::new();
+
+        if self.arch.contains("llama") || self.arch.contains("mistral") {
+            // Check if it's LLaMA-3 (which uses specific header IDs)
+            let is_llama3 = self.tokenizer.vocab_size() > 100000; // LLaMA 3 has 128k vocab
+            
+            if is_llama3 {
+                for msg in messages {
+                    out.push_str(&format!(
+                        "<|start_header_id|>{}<|end_header_id|>\n\n{}<|eot_id|>\n",
+                        msg.role, msg.content
+                    ));
+                }
+                out.push_str("<|start_header_id|>assistant<|end_header_id|>\n\n");
+                return out;
+            } else {
+                // Mistral / Llama-2 [INST] format
+                for msg in messages {
+                    if msg.role == "system" {
+                        out.push_str(&format!("<<SYS>>\n{}\n<</SYS>>\n", msg.content));
+                    } else if msg.role == "user" {
+                        out.push_str(&format!("[INST] {} [/INST]", msg.content));
+                    } else {
+                        out.push_str(&format!(" {} ", msg.content));
+                    }
+                }
+                return out;
+            }
+        }
+
+        // Default to ChatML (Qwen, Phi-3, etc)
         for msg in messages {
             out.push_str(&format!(
                 "<|im_start|>{}\n{}<|im_end|>\n",

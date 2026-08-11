@@ -48,6 +48,7 @@ success "Rust $(rustc --version | awk '{print $2}') ready"
 # 3. Build
 info "Building markus (release)... this may take a few minutes."
 cd "$ENGINE_DIR"
+export RUSTFLAGS="-C target-cpu=native"
 cargo build --release 2>&1 | grep -E "Compiling|Finished|error" | while read -r line; do
     echo -e "     ${DIM}${line}${RST}"
 done
@@ -61,6 +62,7 @@ success "Build complete"
 
 # 4. Install
 mkdir -p "$INSTALL_DIR"
+rm -f "$INSTALL_DIR/$BINARY_NAME"
 cp "$ENGINE_DIR/target/release/markus-engine" "$INSTALL_DIR/$BINARY_NAME"
 chmod +x "$INSTALL_DIR/$BINARY_NAME"
 success "Installed to ${CYN}$INSTALL_DIR/$BINARY_NAME${RST}"
