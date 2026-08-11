@@ -2,36 +2,21 @@
 
 Markus is a fully independent, Rust-native Large Language Model (LLM) manager and inference engine. It replaces complex Python environments and C/C++ dependencies (like `llama.cpp`) with a blazingly fast, memory-safe, pure Rust stack powered by HuggingFace's `candle` framework.
 
-## 🚀 Features
+## 🚀 Quick Install
 
-- **Pure Rust Inference**: Zero C/C++ dependencies (`llama.cpp` is no longer required).
-- **Interactive TUI**: A beautiful Ratatui-based terminal UI for chatting, browsing models, and managing system resources.
-- **Anywhere Access**: Run `markus` from any directory once installed.
-- **OpenAI-Compatible Server**: Drop-in replacement for OpenAI endpoints (`POST /v1/chat/completions`).
-- **GGUF Support**: Direct, zero-copy parsing and execution of `.gguf` model files.
-- **Multi-Model Support**: Out-of-the-box support for LLaMA 1/2/3, Mistral, Phi-3, Qwen, Gemma, DeepSeek, and more.
-- **HuggingFace Downloader**: Built-in async downloader to easily pull models via aliases or direct URLs.
-
----
-
-## 📦 Installation
-
-To get started, you will need [Rust](https://rustup.rs/) installed on your machine. The install scripts will build the engine from source and place the `markus` executable globally in your PATH (`~/.local/bin` for Linux/macOS or `~\.local\bin` for Windows).
+To install Markus globally so you can run it from any directory, just copy and paste the one-liner for your OS:
 
 ### Linux & macOS
-Open a terminal in the project directory and run:
 ```bash
-chmod +x install.sh
-./install.sh
+curl -sSL https://raw.githubusercontent.com/Precise-Goals/markus/main/install.sh | bash
 ```
 
-### Windows
-Open PowerShell in the project directory and run:
+### Windows (PowerShell)
 ```powershell
-.\install.ps1
+irm https://raw.githubusercontent.com/Precise-Goals/markus/main/install.ps1 | iex
 ```
 
-*(Note: Depending on your execution policies, you may need to run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` first).*
+*(Note: You will need [Rust](https://rustup.rs/) and `git` installed. The installer will automatically clone, build, and add `markus` to your PATH).*
 
 ---
 
@@ -46,61 +31,53 @@ markus
 *Navigating the TUI:* Use arrow keys (or `j`/`k`) to move, `Enter` to select, and `q` to quit.
 
 ### Command Line Mode (CLI)
+You can bypass the TUI and execute commands directly:
 
-You can also use `markus` for fast terminal commands:
-
-- **List local models:**
-  ```bash
-  markus list
-  ```
-- **Chat with a model (by index or name):**
-  ```bash
-  markus run 1
-  markus run qwen3
-  ```
-- **Run a single-shot prompt:**
-  ```bash
-  markus run 1 --prompt "Explain quantum computing in simple terms."
-  ```
-- **Download a new model from HuggingFace:**
-  ```bash
-  markus pull llama3.2
-  ```
-- **Start the OpenAI-compatible API Server:**
-  ```bash
-  markus serve 1 --port 8080
-  ```
-- **Show system RAM/GPU status:**
-  ```bash
-  markus status
-  ```
-- **Clear system RAM (drop caches/kill zombie processes):**
-  ```bash
-  markus freemem
-  ```
+- **List local models:** `markus list`
+- **Chat with a model:** `markus run 1` or `markus run qwen3`
+- **Single-shot prompt:** `markus run 1 --prompt "Explain quantum computing"`
+- **Download a model:** `markus pull llama3.2`
+- **Start OpenAI API Server:** `markus serve 1 --port 8080`
+- **Show system hardware status:** `markus status`
+- **Clear system RAM:** `markus freemem`
 
 ---
 
-## 🏗️ Architecture
+## 📖 In-Depth Project Explanation
 
-Markus v3 is built as a highly modular Cargo workspace containing:
-1. `markus-core`: The heart of the engine (GGUF parsing, Tokenizer, async Candle inference pipeline, Model Scanner).
-2. `markus-server`: An Axum-based web server that provides streaming SSE and blocking JSON responses using standard OpenAI schemas.
-3. `markus-tui`: A rich terminal application using `ratatui` and `crossterm`.
-4. `markus-cli`: The unified binary entrypoint tying everything together with `clap`.
+### Why Pure Rust?
+Historically, LLM execution pipelines have relied heavily on `llama.cpp` (a large C/C++ library) wrapped in Python bindings or messy bash scripts. While performant, this creates massive dependency headaches—users need specific GCC versions, CMake, build-essential, and gigabytes of compiled binaries just to chat with a model.
 
-All ML mathematical operations and quantized tensor executions are fully handled natively by [Candle](https://github.com/huggingface/candle).
+**Markus v3 completely eliminates this.** By leveraging HuggingFace's [Candle](https://github.com/huggingface/candle) (a minimalist ML framework for Rust), Markus parses GGUF files natively and executes quantized tensor math natively in Rust. This results in:
+- **Memory Safety:** Rust’s borrow checker guarantees no segfaults or memory leaks.
+- **Microscopic Footprint:** The entire compiled binary is around ~15MB. No giant shared libraries.
+- **Portability:** If it compiles, it runs. No missing `.so` or `.dll` files.
+
+### 🏗️ Architecture
+
+Markus v3 is divided into a highly modular Cargo workspace:
+
+#### 1. `markus-core` (The Heart)
+- **GGUF Parser:** We built a custom zero-copy parser that reads `.gguf` binary files to extract layer metadata, tensor shapes, and quantization types directly.
+- **Tokenizer:** Loads HuggingFace `tokenizer.json` logic for fast encoding/decoding.
+- **Inference Pipeline:** A multithreaded generation loop that runs the model's forward pass. It spawns the generation on a dedicated Tokio blocking thread and streams raw tokens back through a `tokio::sync::mpsc` channel.
+- **Model Dispatcher:** Automatically detects the architecture inside the GGUF (e.g., LLaMA, Phi-3, Qwen2) and loads the correct Transformer block definitions.
+
+#### 2. `markus-server` (The API)
+- Built on `Axum`, this crate provides an HTTP server mimicking the OpenAI API (`POST /v1/chat/completions`). 
+- Because tokens stream over the `mpsc` channel, the server can easily chunk them into Server-Sent Events (SSE) for real-time web clients, or buffer them for blocking responses.
+
+#### 3. `markus-tui` (The Interface)
+- Replaces the original bash-based arrow menu with a beautiful, flicker-free terminal application built with `ratatui` and `crossterm`.
+- Features isolated widgets: a Chat pane with word-wrapping, a Model Browser, and a System Dashboard that monitors RAM/CPU in real-time.
+
+#### 4. `markus-cli` (The Glue)
+- Powered by `clap`, this acts as the entrypoint. It parses your command line arguments, handles `stdout` printing for quick tasks (like `markus list`), and launches the TUI or Server when requested.
+
+### Model Discovery & Caching
+Markus scans standard directories (`~/.local/share/markus/models`, `~/.cache/huggingface`, Ollama folders, LM Studio folders) to find all `.gguf` models on your machine without requiring duplication.
 
 ---
-
-## ⚙️ Configuration
-
-Configuration is automatically stored in `~/.config/markus/config.toml`. You can view or edit these settings by running:
-```bash
-markus config show
-markus config edit
-```
-Settings include default context lengths, CPU threads, max tokens, repetition penalties, and more.
 
 ## License
 
