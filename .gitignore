@@ -12,3 +12,4 @@
 *.swo
 .vscode/
 .idea/
+engine/target/
